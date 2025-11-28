@@ -91,13 +91,13 @@
 
 *   **用户**：“帮我画一只在雨中打伞的小猫，要在赛博朋克街道上。”
 *   **机器人**：(LLM 自动分析 -> 生成英文 Prompt -> 调用 ComfyUI -> 发送图片)
-![img.png](assets/llm.png)
+![llm演示](https://raw.githubusercontent.com/lumingya/astrbot_plugin_comfyui_pro/main/assets/llm.png)
 ### 方式二：指令模式
 *   `/画图 <提示词>`：直接发送提示词进行生成。
-![img.png](assets/画图.png)
+![llm演示](https://raw.githubusercontent.com/lumingya/astrbot_plugin_comfyui_pro/main/assets/draw.png)
 
 *   `/画图no <提示词>`：直接发送图片（不回复引用）。
-![img.png](assets/画图no.png)
+![llm演示](https://raw.githubusercontent.com/lumingya/astrbot_plugin_comfyui_pro/main/assets/drwano.png)
 
 
 ### 方式三：管理指令 (仅管理员)
