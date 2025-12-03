@@ -602,7 +602,7 @@ class ComfyUIPlugin(Star):
 
         # 2) 提取 prompt
         prompt = None
-        m = re.search(r"提示词[   :：]\s*([^\n]+)", full_text)
+        m = re.search(r"提示词是[   :：]\s*([^\n]+)", full_text)
         if m:
             prompt = (
                 m.group(1)
