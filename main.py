@@ -603,13 +603,13 @@ class ComfyUIPlugin(Star):
 
         # 2) 提取 prompt
         prompt = None
-        m = re.search(r"提示词[是:：]\s*([^\n]+)", full_text)
+        m = re.search(r"提示词[���:：]\s*([^\n]+)", full_text)
         if m:
             prompt = (
                 m.group(1)
                 .strip()
-                .lstrip('`"“‘')
-                .rstrip('`"”’')
+                .lstrip('`""'')
+                .rstrip('`""'')
                 .strip()
             )
 
