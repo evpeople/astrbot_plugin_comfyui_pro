@@ -28,7 +28,7 @@ PLUGIN_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
     "astrbot_plugin_comfyui_pro",  
     "lumingya",                    
     "ComfyUI Pro 连接器",           
-    "2.0",
+    "1.2.0",
     "https://github.com/lumingya/astrbot_plugin_comfyui_pro" 
 )
 class ComfyUIPlugin(Star):
@@ -184,7 +184,12 @@ class ComfyUIPlugin(Star):
             if not workflow_dir.exists():
                 return
 
-            files = sorted([f.name for f in workflow_dir.glob("*.json")])
+            # 排除 .steps.json 文件
+            files = sorted([
+                f.name for f in workflow_dir.glob("*.json")
+                if not f.name.endswith(".steps.json")
+            ])
+        
             if not files:
                 files = ["workflow_api.json"]
 
@@ -194,10 +199,10 @@ class ComfyUIPlugin(Star):
             target = data['workflow_settings']['items']['json_file']
             target['options'] = files
             target['enum'] = files
-            
+        
             with open(schema_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
-            
+        
             logger.info(f"[ComfyUI] 🔄 工作流列表已更新: {len(files)} 个可用")
 
         except Exception as e:
@@ -365,6 +370,7 @@ class ComfyUIPlugin(Star):
                 "  /comfy_ls          列出所有工作流",
                 "  /comfy_use <序号>  切换工作流",
                 "  /comfy_save        导入新工作流",
+                "  /comfy_add         步数覆盖（按节点ID）",
                 "  /违禁级别          设置群敏感度",
                 ""
             ])
@@ -436,23 +442,47 @@ class ComfyUIPlugin(Star):
             yield event.plain_result("❌ 工作流目录不存在")
             return
 
-        files = sorted([f.name for f in self.workflow_dir.glob("*.json")])
+        # 排除 .steps.json 文件
+        files = sorted([
+            f.name for f in self.workflow_dir.glob("*.json") 
+            if not f.name.endswith(".steps.json")
+        ])
+    
         if not files:
             yield event.plain_result("📂 目录中没有工作流文件")
             return
 
         current_file = self.api.wf_filename if self.api else "未知"
-        
+    
         msg = ["📂 可用工作流列表", "━━━━━━━━━━━━━━━━━━"]
+    
         for i, f in enumerate(files, 1):
-            if f == current_file:
-                msg.append(f"✅ {i}. {f} (当前)")
-            else:
-                msg.append(f"   {i}. {f}")
+            stem = Path(f).stem
+            sidecar = self.workflow_dir / f"{stem}.steps.json"
         
+            # 检查是否有步数覆盖（新格式：按节点ID存储）
+            steps_info = ""
+            if sidecar.exists():
+                try:
+                    with open(sidecar, "r", encoding="utf-8") as sf:
+                        data = json.load(sf)
+                        if data and isinstance(data, dict):
+                            count = len(data)
+                            steps_info = f" [覆盖:{count}项]"
+                except:
+                    pass
+        
+            if f == current_file:
+                msg.append(f"✅ {i}. {f}{steps_info} (当前)")
+            else:
+                msg.append(f"   {i}. {f}{steps_info}")
+    
         msg.append("")
         msg.append("━━━━━━━━━━━━━━━━━━")
-        msg.append("切换：/comfy_use <序号> [正面ID] [负面ID] [输出ID]")
+        msg.append("切换：/comfy_use <序号>")
+        msg.append("覆盖：/comfy_add <节点ID> <步数>")
+        msg.append("查看：/comfy_add list")
+    
         yield event.plain_result("\n".join(msg))
 
     @filter.command("comfy_use")
@@ -473,7 +503,12 @@ class ComfyUIPlugin(Star):
             return
 
         try:
-            files = sorted([f.name for f in self.workflow_dir.glob("*.json")])
+            # 排除 .steps.json 文件
+            files = sorted([
+                f.name for f in self.workflow_dir.glob("*.json")
+                if not f.name.endswith(".steps.json")
+            ])
+        
             index = int(args[1])
             if not (1 <= index <= len(files)):
                 yield event.plain_result(f"❌ 序号错误，请输入 1 到 {len(files)} 之间的数字")
@@ -553,6 +588,188 @@ class ComfyUIPlugin(Star):
             )
         except Exception as e:
             yield event.plain_result(f"❌ 保存失败: {e}")
+    @filter.command("comfy_add")
+    async def cmd_comfy_add(self, event: AstrMessageEvent):
+        """给当前工作流的指定节点绑定步数覆盖"""
+    
+        # 权限检查
+        user_id = str(event.get_sender_id())
+        if user_id not in self.admin_user_ids:
+            yield event.plain_result("🚫 权限不足，仅管理员可设置步数覆盖")
+            return
+    
+        # 检查 API
+        if not self.api:
+            yield event.plain_result("❌ ComfyUI API 未初始化")
+            return
+    
+        # 解析参数
+        args = event.message_str.split()
+    
+        # 无参数：显示帮助
+        if len(args) < 2:
+            yield event.plain_result(
+                "📝 步数覆盖设置（按节点ID）\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "用法：\n"
+                "  /comfy_add <节点ID> <步数>      单个设置\n"
+                "  /comfy_add <ID1> <步数1> <ID2> <步数2>  批量设置\n"
+                "  /comfy_add <节点ID> off         取消单个\n"
+                "  /comfy_add list                 查看当前覆盖\n"
+                "  /comfy_add clear                清空所有覆盖\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "示例：\n"
+                "  /comfy_add 3839 20              节点3839设为20步\n"
+                "  /comfy_add 3839 20 4521 50      同时设置两个节点\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "💡 节点ID可在工作流JSON中查找 ParameterBreak 节点"
+            )
+            return
+    
+        sub_cmd = args[1].lower()
+    
+        # 子命令：list
+        if sub_cmd == "list":
+            async for result in self._comfy_add_list(event):
+                yield result
+            return
+    
+        # 子命令：clear
+        if sub_cmd == "clear":
+            async for result in self._comfy_add_clear(event):
+                yield result
+            return
+    
+        # 正常流程：解析 <节点ID> <步数> 对
+        params = args[1:]
+    
+        if len(params) % 2 != 0:
+            yield event.plain_result("❌ 参数格式错误，需要成对输入：<节点ID> <步数>")
+            return
+    
+        # 获取当前工作流的 sidecar 路径
+        current_file = self.api.wf_filename
+        stem = Path(current_file).stem
+        sidecar_path = self.workflow_dir / f"{stem}.steps.json"
+    
+        # 读取现有配置
+        existing = {}
+        if sidecar_path.exists():
+            try:
+                with open(sidecar_path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+            except:
+                existing = {}
+    
+        # 解析并更新
+        changes = []
+        removes = []
+    
+        for i in range(0, len(params), 2):
+            node_id = params[i]
+            value = params[i + 1].lower()
+        
+            if value in ("off", "0", "del", "delete", "rm", "remove"):
+                # 删除该节点的覆盖
+                if node_id in existing:
+                    del existing[node_id]
+                    removes.append(node_id)
+            else:
+                # 设置步数
+                try:
+                    steps = int(value)
+                    if not (1 <= steps <= 200):
+                        yield event.plain_result(f"❌ 步数应在 1-200 之间，节点 {node_id} 的值 {value} 无效")
+                        return
+                    existing[node_id] = {"steps": steps}
+                    changes.append(f"{node_id}:{steps}步")
+                except ValueError:
+                    yield event.plain_result(f"❌ 无效的步数值：{value}")
+                    return
+    
+        # 保存
+        try:
+            if existing:
+                with open(sidecar_path, "w", encoding="utf-8") as f:
+                    json.dump(existing, f, ensure_ascii=False, indent=2)
+            else:
+                # 如果清空了，删除文件
+                if sidecar_path.exists():
+                    sidecar_path.unlink()
+        
+            # 构建反馈消息
+            msg_parts = []
+            if changes:
+                msg_parts.append(f"✅ 已设置: {', '.join(changes)}")
+            if removes:
+                msg_parts.append(f"🗑️ 已移除: {', '.join(removes)}")
+        
+            msg_parts.append(f"📍 工作流: {current_file}")
+        
+            logger.info(f"[ComfyUI] 管理员 {user_id} 修改步数覆盖: {current_file} -> {existing}")
+            yield event.plain_result("\n".join(msg_parts))
+    
+        except Exception as e:
+            yield event.plain_result(f"❌ 保存失败: {e}")
+
+    async def _comfy_add_list(self, event: AstrMessageEvent):
+        """列出当前工作流的步数覆盖"""
+    
+        current_file = self.api.wf_filename
+        stem = Path(current_file).stem
+        sidecar_path = self.workflow_dir / f"{stem}.steps.json"
+    
+        lines = [
+            f"📊 当前工作流步数覆盖",
+            f"━━━━━━━━━━━━━━━━━━",
+            f"📍 工作流: {current_file}",
+            ""
+        ]
+    
+        if not sidecar_path.exists():
+            lines.append("ℹ️ 暂无步数覆盖配置")
+        else:
+            try:
+                with open(sidecar_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            
+                if not data:
+                    lines.append("ℹ️ 暂无步数覆盖配置")
+                else:
+                    lines.append("节点覆盖列表：")
+                    for node_id, value in data.items():
+                        if isinstance(value, dict):
+                            steps = value.get("steps", "?")
+                        else:
+                            steps = value
+                        lines.append(f"  • 节点 {node_id}: {steps} 步")
+            except Exception as e:
+                lines.append(f"❌ 读取配置失败: {e}")
+    
+        lines.append("")
+        lines.append("━━━━━━━━━━━━━━━━━━")
+        lines.append("设置：/comfy_add <节点ID> <步数>")
+        lines.append("清空：/comfy_add clear")
+    
+        yield event.plain_result("\n".join(lines))
+    async def _comfy_add_clear(self, event: AstrMessageEvent):
+        """清空当前工作流的所有步数覆盖"""
+    
+        current_file = self.api.wf_filename
+        stem = Path(current_file).stem
+        sidecar_path = self.workflow_dir / f"{stem}.steps.json"
+    
+        if not sidecar_path.exists():
+            yield event.plain_result(f"ℹ️ {current_file} 本来就没有步数覆盖")
+            return
+    
+        try:
+            sidecar_path.unlink()
+            user_id = str(event.get_sender_id())
+            logger.info(f"[ComfyUI] 管理员 {user_id} 清空步数覆盖: {current_file}")
+            yield event.plain_result(f"✅ 已清空 {current_file} 的所有步数覆盖")
+        except Exception as e:
+            yield event.plain_result(f"❌ 清空失败: {e}")
 
     @filter.command("画图", aliases=["绘画"])
     async def cmd_paint(self, event: AstrMessageEvent):
