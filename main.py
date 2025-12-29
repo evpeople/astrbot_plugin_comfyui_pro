@@ -28,7 +28,7 @@ PLUGIN_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
     "astrbot_plugin_comfyui_pro",  
     "lumingya",                    
     "ComfyUI Pro 连接器",           
-    "2.0",
+    "1.2.0",
     "https://github.com/lumingya/astrbot_plugin_comfyui_pro" 
 )
 class ComfyUIPlugin(Star):
@@ -58,7 +58,10 @@ class ComfyUIPlugin(Star):
         self.admin_user_ids = set(map(str, control_conf.get("admin_ids", [])))
         self.lockdown = bool(control_conf.get("lockdown", False))
         self.whitelist_group_ids = set(map(str, control_conf.get("whitelist_group_ids", [])))
-
+    
+        llm_settings = config.get("llm_settings", {})
+        self.multi_image_mode = llm_settings.get("multi_image_mode", False)
+        logger.info(f"[ComfyUI] 🖼️ 多图模式: {'开启' if self.multi_image_mode else '关闭'}")
         # 策略配置
         self.default_group_policy = str(control_conf.get("default_group_policy", "none")).lower()
         self.default_private_policy = str(control_conf.get("default_private_policy", "none")).lower()
@@ -385,7 +388,83 @@ class ComfyUIPlugin(Star):
             tips.append(f"📂 数据目录：{self.data_dir}")
         
         yield event.plain_result("\n".join(tips))
-
+    @filter.command("comfy_test_send2")
+    async def cmd_test_send2(self, event: AstrMessageEvent):
+        """测试主动发送 - 第二轮"""
+    
+        user_id = str(event.get_sender_id())
+        if user_id not in self.admin_user_ids:
+            yield event.plain_result("🚫 仅管理员可用")
+            return
+    
+        from astrbot.api.message_components import Plain
+    
+        results = []
+    
+        # 测试 1: event.send 传入 MessageEventResult
+        try:
+            msg_result = event.plain_result("测试1: send + plain_result")
+            await event.send(msg_result)
+            results.append("✅ event.send(event.plain_result(...)) 可用")
+        except Exception as e:
+            results.append(f"❌ send+plain_result: {type(e).__name__}: {e}")
+    
+        # 测试 2: event.send 传入 chain_result
+        try:
+            msg_result = event.chain_result([Plain("测试2: send + chain_result")])
+            await event.send(msg_result)
+            results.append("✅ event.send(event.chain_result([...])) 可用")
+        except Exception as e:
+            results.append(f"❌ send+chain_result: {type(e).__name__}: {e}")
+    
+        # 测试 3: event.send_message 带 target
+        try:
+            await event.send_message(
+                event.unified_msg_origin,
+                event.chain_result([Plain("测试3: send_message 两参数")])
+            )
+            results.append("✅ event.send_message(origin, chain_result) 可用")
+        except Exception as e:
+            results.append(f"❌ send_message两参数: {type(e).__name__}: {e}")
+    
+        # 测试 4: context.send_message 用 chain_result
+        try:
+            await self.context.send_message(
+                event.unified_msg_origin,
+                event.chain_result([Plain("测试4: context + chain_result")])
+            )
+            results.append("✅ context.send_message(origin, chain_result) 可用")
+        except Exception as e:
+            results.append(f"❌ context+chain_result: {type(e).__name__}: {e}")
+    
+        # 测试 5: 查看 MessageChain 是否存在
+        try:
+            from astrbot.api.message_components import MessageChain
+            chain = MessageChain([Plain("测试5: MessageChain")])
+            await event.send(chain)
+            results.append("✅ event.send(MessageChain([...])) 可用")
+        except ImportError:
+            results.append("ℹ️ MessageChain 不可导入")
+        except Exception as e:
+            results.append(f"❌ MessageChain: {type(e).__name__}: {e}")
+    
+        # 测试 6: 直接查看 send 的签名
+        try:
+            import inspect
+            sig = inspect.signature(event.send)
+            results.append(f"ℹ️ event.send 签名: {sig}")
+        except Exception as e:
+            results.append(f"ℹ️ 无法获取签名: {e}")
+    
+        # 测试 7: 查看 send_message 签名
+        try:
+            import inspect
+            sig = inspect.signature(event.send_message)
+            results.append(f"ℹ️ event.send_message 签名: {sig}")
+        except Exception as e:
+            results.append(f"ℹ️ 无法获取签名: {e}")
+    
+        yield event.plain_result("\n".join(["📋 发送测试结果 v2：", ""] + results))
     @filter.command("违禁级别", aliases={"banlevel", "敏感级别"})
     async def cmd_set_policy(self, event: AstrMessageEvent):
         allowed, reason = self._check_access(event)
@@ -889,54 +968,211 @@ class ComfyUIPlugin(Star):
                 result.append(w)
         return result
 
+    # ====== 修改提取逻辑 ======
     @filter.on_llm_response(priority=1)
     async def _extract_prompt_before_filter(self, event: AstrMessageEvent, resp: LLMResponse):
-        """提取 LLM 回复中的提示词"""
+        """提取 LLM 回复中的提示词（统一使用 <提示词>xxx</提示词> 格式）"""
         if not resp or not resp.completion_text:
             return
-        
+    
         full_text = resp.completion_text
-        m = re.search(r"提示词是\s*[:：]?\s*(.+)", full_text)
-        
-        if not m:
+    
+        # 提取所有 <提示词>xxx</提示词>
+        prompts = re.findall(r'<提示词>(.*?)</提示词>', full_text, flags=re.DOTALL)
+    
+        if not prompts:
             return
-        
-        prompt = m.group(1).strip()
-        prompt = re.sub(r"</[^>]+>.*$", "", prompt, flags=re.DOTALL).strip()
-        prompt = prompt.strip('`"\'""''').strip()
-        
-        if not prompt:
+    
+        # 清理提示词内容
+        cleaned_prompts = []
+        for p in prompts:
+            # 去除可能残留的 "提示词是:" 前缀
+            p = re.sub(r'^提示词是\s*[:：]?\s*', '', p).strip()
+            # 去除多余符号
+            p = p.strip('`"\'""''').strip()
+            if p:
+                cleaned_prompts.append(p)
+    
+        if not cleaned_prompts:
             return
+    
+        # 如果只有一个提示词 → 单图模式
+        if len(cleaned_prompts) == 1:
+            event._comfy_extracted_prompt = cleaned_prompts[0]
+            logger.info(f"[ComfyUI] 📝 检测到单图模式: {cleaned_prompts[0][:50]}...")
+            return
+    
+        # 多个提示词 → 多图模式（仅在开启时生效）
+        if self.multi_image_mode:
+            # 使用正则分割，保留文本和提示词
+            parts = re.split(r'<提示词>.*?</提示词>', full_text, flags=re.DOTALL)
         
-        event._comfy_extracted_prompt = prompt
+            # 构建段落列表
+            segments = []
+            prompt_idx = 0
+        
+            for i, text in enumerate(parts):
+                # 添加文本段落
+                text = text.strip()
+                if text:
+                    segments.append({"type": "text", "content": text})
+            
+                # 添加对应的提示词（除了最后一个文本段）
+                if prompt_idx < len(cleaned_prompts):
+                    segments.append({"type": "prompt", "content": cleaned_prompts[prompt_idx]})
+                    prompt_idx += 1
+        
+            if segments:
+                event._comfy_segments = segments
+                logger.info(f"[ComfyUI] 📝 检测到多图模式，共 {len(cleaned_prompts)} 张图片")
+        else:
+            # 多图模式未开启，只取第一个提示词
+            event._comfy_extracted_prompt = cleaned_prompts[0]
+            logger.warning(f"[ComfyUI] 检测到 {len(cleaned_prompts)} 个提示词，但多图模式未开启，仅使用第一个")
 
+    # ====== 自动绘图逻辑保持不变 ======
     @filter.on_decorating_result(priority=99)
     async def _auto_paint_from_llm(self, event: AstrMessageEvent):
-        """自动绘图"""
+        """自动绘图（支持单图和多图分段模式）"""
         if getattr(event, "_comfy_auto_painted", False):
             return
+
+        # 检查是否有多图段落
+        segments = getattr(event, "_comfy_segments", None)
+
+        # === 多图分段模式 ===
+        if segments and self.multi_image_mode:
+            event._comfy_auto_painted = True
+    
+            # 检查权限
+            allowed, reason = self._check_access(event)
+            if not allowed:
+                logger.warning(f"[ComfyUI] 多图请求被拒绝: {reason}")
+                return
+    
+            # 计算图片数量
+            prompt_count = sum(1 for s in segments if s["type"] == "prompt")
+            logger.info(f"[ComfyUI] 🎨 开始多图分段生成，共 {prompt_count} 张图片")
+    
+            # 重组段落：将 (文字, 提示词) 配对
+            pairs = []
+            current_text = ""
         
+            for segment in segments:
+                if segment["type"] == "text":
+                    current_text = segment["content"]
+                elif segment["type"] == "prompt":
+                    pairs.append({
+                        "text": current_text,
+                        "prompt": segment["content"]
+                    })
+                    current_text = ""  # 重置
+        
+            # 如果最后还有剩余文字（没有对应提示词），单独处理
+            if current_text:
+                pairs.append({"text": current_text, "prompt": None})
+        
+            # 冷却检查（只检查一次）
+            ok, remain = self._check_cooldown(event)
+            if not ok:
+                try:
+                    await event.send(event.plain_result(f"⏱️ 冷却中，请 {remain} 秒后重试"))
+                except:
+                    pass
+                logger.warning(f"[ComfyUI] 用户 {event.get_sender_id()} 冷却中")
+                return
+        
+            # 依次处理每对 (文字 + 图片)
+            img_idx = 0
+            for pair in pairs:
+                text_content = pair["text"]
+                prompt_content = pair["prompt"]
+            
+                # 如果有提示词，生成图片
+                if prompt_content:
+                    img_idx += 1
+                
+                    # 敏感词检查
+                    passed, sensitive = self._check_sensitive(prompt_content, event)
+                    if not passed:
+                        tip = "、".join(sensitive[:3])
+                        try:
+                            await event.send(event.plain_result(f"{text_content}\n🚫 [图片{img_idx}] 检测到敏感词：{tip}"))
+                        except:
+                            pass
+                        logger.warning(f"[ComfyUI] 图片 {img_idx} 触发敏感词，已跳过")
+                        continue
+                
+                    # 生成图片
+                    try:
+                        logger.info(f"[ComfyUI] 🎨 [{img_idx}/{prompt_count}] 开始生成: {prompt_content[:50]}...")
+                        img_data, error_msg = await self.api.generate(prompt_content)
+                    
+                        if not img_data:
+                            logger.error(f"[ComfyUI] 图片 {img_idx} 生成失败: {error_msg}")
+                            try:
+                                await event.send(event.plain_result(f"{text_content}\n❌ [图片{img_idx}] 生成失败"))
+                            except:
+                                pass
+                            continue
+                    
+                        # 保存图片
+                        img_filename = f"{uuid.uuid4()}.png"
+                        img_path = self.output_dir / img_filename
+                        with open(img_path, 'wb') as fp:
+                            fp.write(img_data)
+                    
+                        # 发送：文字 + 图片 一起
+                        chain = []
+                        if text_content:
+                            chain.append(Plain(text_content + "\n"))
+                        chain.append(Image.fromFileSystem(str(img_path)))
+                    
+                        await event.send(event.chain_result(chain))
+                        logger.info(f"[ComfyUI] ✅ [{img_idx}/{prompt_count}] 文字+图片已发送: {img_filename}")
+                    
+                    except Exception as e:
+                        logger.error(f"[ComfyUI] 图片 {img_idx} 处理异常: {e}")
+                        logger.error(traceback.format_exc())
+            
+                else:
+                    # 只有文字，没有提示词
+                    if text_content:
+                        try:
+                            await event.send(event.plain_result(text_content))
+                            logger.info(f"[ComfyUI] 📤 纯文字已发送")
+                        except Exception as e:
+                            logger.error(f"[ComfyUI] 发送文字失败: {e}")
+    
+            # 处理完毕，清空原结果
+            result = event.get_result()
+            if result:
+                result.chain.clear()
+    
+            return
+
+        # === 单图模式（原有逻辑）===
         prompt = getattr(event, "_comfy_extracted_prompt", None)
         if not prompt:
             return
-        
+
         event._comfy_auto_painted = True
-        
+
         def _has_image(comp):
             if isinstance(comp, Image):
                 return True
             if isinstance(comp, Node):
                 return any(_has_image(c) for c in comp.content)
             return False
-        
+
         result = event.get_result()
         if not result:
             return
-            
+    
         chain = result.chain
         if chain and any(_has_image(c) for c in chain):
             return
-        
+
         extra_chain = []
         try:
             async for res in self.comfyui_txt2img(
@@ -949,7 +1185,7 @@ class ComfyUIPlugin(Star):
         except Exception as e:
             logger.error(f"[ComfyUI] 自动绘图异常: {e}")
             return
-        
+
         if extra_chain and result:
             result.chain.extend(extra_chain)
 
