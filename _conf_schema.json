@@ -15,10 +15,24 @@
         "type": "string",
         "default": "workflow.json",
         "options": [
-          "workflow.json"
+          "Pornmaster_z-image-t2i_2025-11-29(3).json",
+          "workflow_api.json",
+          "爱丽丝 (1).json",
+          "爱丽丝-3d.json",
+          "爱丽丝-cunny.json",
+          "爱丽丝-yu.json",
+          "爱丽丝-色.json",
+          "爱丽丝.json"
         ],
         "enum": [
-          "workflow.json"
+          "Pornmaster_z-image-t2i_2025-11-29(3).json",
+          "workflow_api.json",
+          "爱丽丝 (1).json",
+          "爱丽丝-3d.json",
+          "爱丽丝-cunny.json",
+          "爱丽丝-yu.json",
+          "爱丽丝-色.json",
+          "爱丽丝.json"
         ]
       },
       "input_node_id": {
