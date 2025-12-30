@@ -28,7 +28,7 @@ PLUGIN_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
     "astrbot_plugin_comfyui_pro",  
     "lumingya",                    
     "ComfyUI Pro 连接器",           
-    "2.2",
+    "2.2.0",
     "https://github.com/lumingya/astrbot_plugin_comfyui_pro" 
 )
 class ComfyUIPlugin(Star):
