@@ -257,32 +257,46 @@ class ComfyUI:
             workflow = self._load_workflow()
         except Exception as e:
             return None, str(e)
-        
+
         self._inject_params(workflow, prompt)
 
+        # 打印完整的请求 payload
+        payload = {"prompt": workflow, "client_id": client_id}
+        logger.info(f"[ComfyUI] ===== 发送给服务器的完整 payload =====")
+        logger.info(f"[ComfyUI] client_id: {client_id}")
+        logger.info(f"[ComfyUI] prompt: {json.dumps(payload, indent=2, ensure_ascii=False)}")
+        logger.info(f"[ComfyUI] ====================================")
+
         async with aiohttp.ClientSession() as session:
-            payload = {"prompt": workflow, "client_id": client_id}
             try:
+                logger.info(f"[ComfyUI] 正在发送请求到 {self.url}/prompt ...")
                 async with session.post(f"{self.url}/prompt", json=payload) as resp:
                     if resp.status != 200:
+                        logger.error(f"[ComfyUI] 请求失败，HTTP状态码: {resp.status}")
                         return None, f"连接 ComfyUI 失败: {resp.status}"
                     res_json = await resp.json()
                     prompt_id = res_json.get("prompt_id")
+                    logger.info(f"[ComfyUI] 服务器响应: {json.dumps(res_json, ensure_ascii=False)}")
             except Exception as e:
+                logger.error(f"[ComfyUI] 请求异常: {e}")
                 return None, f"请求报错: {str(e)}"
 
-            for _ in range(300): 
+            logger.info(f"[ComfyUI] prompt_id: {prompt_id}，开始轮询等待结果...")
+
+            for _ in range(300):
                 await asyncio.sleep(1)
                 try:
                     async with session.get(f"{self.url}/history/{prompt_id}") as h_resp:
                         if h_resp.status != 200:
                             continue
                         history = await h_resp.json()
+                        # logger.debug(f"[ComfyUI] history响应: {json.dumps(history, ensure_ascii=False)}")
                 except:
                     continue
 
                 if prompt_id in history:
                     outputs = history[prompt_id].get("outputs", {})
+                    logger.info(f"[ComfyUI] 工作流执行完成，输出节点: {list(outputs.keys())}")
                     img_info = None
                     
                     if self.output_id and self.output_id in outputs:
@@ -301,11 +315,15 @@ class ComfyUI:
                         sfolder = img_info['subfolder']
                         itype = img_info['type']
                         img_url = f"{self.url}/view?filename={fname}&subfolder={sfolder}&type={itype}"
-                        
+                        logger.info(f"[ComfyUI] 找到图片: filename={fname}, subfolder={sfolder}, type={itype}")
+                        logger.info(f"[ComfyUI] 正在下载图片: {img_url}")
+
                         async with session.get(img_url) as img_res:
                             if img_res.status == 200:
-                                return await img_res.read(), None 
+                                logger.info(f"[ComfyUI] 图片下载成功，大小: {img_res.headers.get('Content-Length', '未知')} bytes")
+                                return await img_res.read(), None
                             else:
+                                logger.error(f"[ComfyUI] 图片下载失败，HTTP状态码: {img_res.status}")
                                 return None, "下载图片失败"
                     else:
                         return None, "工作流执行完成，但未找到输出图片"
