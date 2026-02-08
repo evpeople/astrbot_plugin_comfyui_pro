@@ -324,61 +324,61 @@ class ComfyUIPlugin(Star):
             # 如果没有提供 prompt，获取最新 LLM 响应并润色
             if not prompt:
                 try:
-                    logger.info(f"[ComfyUI] draw 命令未提供 prompt，尝试获取 LLM 历史回复...")
+                    logger.info(f"[ComfyUI] draw 命令未提供 prompt，尝试获取 LLM 回复...")
 
-                    # 检查 event 消息链
-                    logger.info(f"[ComfyUI] event.message_obj: {event.message_obj}")
-                    logger.info(f"[ComfyUI] event.message_str: {event.message_str}")
-
-                    # 获取当前对话
-                    umo = event.unified_msg_origin
-                    conv_mgr = self.context.conversation_manager
-                    curr_cid = await conv_mgr.get_curr_conversation_id(umo)
-                    logger.info(f"[ComfyUI] umo={umo}, curr_cid={curr_cid}")
-
-                    # 辅助方法：从 history 字符串中提取 assistant 消息
-                    def extract_assistant(history_str):
-                        if not history_str:
-                            return None
-                        try:
-                            data = json.loads(history_str) if isinstance(history_str, str) else history_str
-                            messages = data if isinstance(data, list) else data.get("messages", [])
-                            for msg in reversed(messages):
-                                if msg.get("role") == "assistant":
-                                    return msg.get("content", "")
-                        except Exception as e:
-                            logger.warning(f"[ComfyUI] 解析历史失败: {e}")
-                        return None
-
-                    # 获取所有对话
-                    convs = await conv_mgr.get_conversations(umo)
-                    logger.info(f"[ComfyUI] 获取到 {len(convs)} 个对话")
-
-                    conversation = None
-                    last_assistant_msg = None
-
-                    # 先检查当前对话
-                    if curr_cid:
-                        curr_conv = await conv_mgr.get_conversation(umo, curr_cid)
-                        logger.info(f"[ComfyUI] 当前对话 {curr_cid} history: {str(curr_conv.history)[:200] if curr_conv.history else 'None'}...")
-                        last_assistant_msg = extract_assistant(curr_conv.history)
-                        if last_assistant_msg:
-                            conversation = curr_conv
-
-                    # 如果当前对话没有，遍历所有对话找最新的
-                    if not last_assistant_msg and convs:
-                        logger.info(f"[ComfyUI] 当前对话无 assistant 消息，遍历所有对话...")
-                        for c in convs:
-                            msg = extract_assistant(c.history)
-                            if msg:
-                                conversation = c
-                                last_assistant_msg = msg
-                                logger.info(f"[ComfyUI] 从对话 {c.cid} 中找到 assistant 消息: {msg[:100]}...")
+                    # 检查是否是回复消息
+                    reply_msg = None
+                    from astrbot.api.message_components import Reply
+                    if hasattr(event.message_obj, 'message'):
+                        for comp in event.message_obj.message:
+                            if isinstance(comp, Reply):
+                                reply_msg = getattr(comp, 'message_str', None) or getattr(comp, 'content', None)
+                                logger.info(f"[ComfyUI] 检测到 Reply 消息: {reply_msg}")
                                 break
 
+                    last_assistant_msg = reply_msg
+
+                    # 如果没有 Reply，尝试从对话历史获取
                     if not last_assistant_msg:
-                        logger.warning(f"[ComfyUI] 所有对话中都未找到 assistant 消息")
-                        yield event.plain_result("❌ 未检测到 LLM 回复，请直接输入提示词")
+                        umo = event.unified_msg_origin
+                        conv_mgr = self.context.conversation_manager
+                        curr_cid = await conv_mgr.get_curr_conversation_id(umo)
+                        logger.info(f"[ComfyUI] umo={umo}, curr_cid={curr_cid}")
+
+                        # 辅助方法：从 history 字符串中提取 assistant 消息
+                        def extract_assistant(history_str):
+                            if not history_str:
+                                return None
+                            try:
+                                data = json.loads(history_str) if isinstance(history_str, str) else history_str
+                                messages = data if isinstance(data, list) else data.get("messages", [])
+                                for msg in reversed(messages):
+                                    if msg.get("role") == "assistant":
+                                        return msg.get("content", "")
+                            except Exception as e:
+                                logger.warning(f"[ComfyUI] 解析历史失败: {e}")
+                            return None
+
+                        # 尝试当前对话
+                        if curr_cid:
+                            curr_conv = await conv_mgr.get_conversation(umo, curr_cid)
+                            logger.info(f"[ComfyUI] 当前对话 {curr_cid} history: {str(curr_conv.history)[:200] if curr_conv.history else 'None'}...")
+                            last_assistant_msg = extract_assistant(curr_conv.history)
+
+                        # 遍历所有对话
+                        if not last_assistant_msg:
+                            convs = await conv_mgr.get_conversations(umo)
+                            logger.info(f"[ComfyUI] 获取到 {len(convs)} 个对话，遍历查找...")
+                            for c in convs:
+                                msg = extract_assistant(c.history)
+                                if msg:
+                                    last_assistant_msg = msg
+                                    logger.info(f"[ComfyUI] 从对话 {c.cid} 中找到消息: {msg[:100]}...")
+                                    break
+
+                    if not last_assistant_msg:
+                        logger.warning(f"[ComfyUI] 未找到可用的 LLM 回复")
+                        yield event.plain_result("❌ 请直接输入提示词，例如：/draw 可爱的猫娘")
                         return
 
                     logger.info(f"[ComfyUI] 开始润色提示词...")
@@ -386,6 +386,7 @@ class ComfyUIPlugin(Star):
                     yield event.plain_result("🎨 正在润色提示词...")
 
                     # 调用 LLM 润色提示词
+                    umo = event.unified_msg_origin
                     provider_id = await self.context.get_current_chat_provider_id(umo)
                     logger.info(f"[ComfyUI] provider_id={provider_id}")
 
@@ -414,6 +415,7 @@ class ComfyUIPlugin(Star):
 
                 except Exception as e:
                     logger.error(f"[ComfyUI] 获取/润色提示词失败: {e}")
+                    logger.error(traceback.format_exc())
                     yield event.plain_result(f"❌ 获取提示词失败，请直接输入提示词")
                     return
 
