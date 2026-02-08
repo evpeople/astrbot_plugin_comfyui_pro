@@ -326,8 +326,8 @@ class ComfyUIPlugin(Star):
                 try:
                     logger.info(f"[ComfyUI] draw 命令未提供 prompt，尝试获取 LLM 历史回复...")
 
-                    # 检查 event.message 是否有特殊内容
-                    logger.info(f"[ComfyUI] event.message: {event.message}")
+                    # 检查 event 消息链
+                    logger.info(f"[ComfyUI] event.message_obj: {event.message_obj}")
                     logger.info(f"[ComfyUI] event.message_str: {event.message_str}")
 
                     # 获取当前对话
