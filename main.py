@@ -331,51 +331,52 @@ class ComfyUIPlugin(Star):
                     curr_cid = await conv_mgr.get_curr_conversation_id(umo)
                     logger.info(f"[ComfyUI] umo={umo}, curr_cid={curr_cid}")
 
-                    if not curr_cid:
-                        logger.info(f"[ComfyUI] curr_cid 为空，尝试获取所有对话...")
-                        # 尝试获取所有对话
-                        convs = await conv_mgr.get_conversations(umo)
-                        logger.info(f"[ComfyUI] 获取到 {len(convs)} 个对话")
-                        for c in convs:
-                            logger.info(f"[ComfyUI]   - cid={c.cid}, history={c.history[:100] if c.history else 'None'}...")
-                        if not convs:
-                            yield event.plain_result("❌ 未检测到对话记录，请直接输入提示词")
-                            return
-                        # 使用最新的对话
-                        curr_cid = convs[-1].cid
-                        logger.info(f"[ComfyUI] 使用最新对话: {curr_cid}")
+                    # 辅助方法：从 history 字符串中提取 assistant 消息
+                    def extract_assistant(history_str):
+                        if not history_str:
+                            return None
+                        try:
+                            data = json.loads(history_str) if isinstance(history_str, str) else history_str
+                            messages = data if isinstance(data, list) else data.get("messages", [])
+                            for msg in reversed(messages):
+                                if msg.get("role") == "assistant":
+                                    return msg.get("content", "")
+                        except Exception as e:
+                            logger.warning(f"[ComfyUI] 解析历史失败: {e}")
+                        return None
 
-                    conversation = await conv_mgr.get_conversation(umo, curr_cid)
-                    logger.info(f"[ComfyUI] conversation: {conversation}, history={str(conversation.history)[:200] if conversation.history else 'None'}")
-                    if not conversation or not conversation.history:
-                        yield event.plain_result("❌ 未检测到对话记录，请直接输入提示词")
-                        return
+                    # 获取所有对话
+                    convs = await conv_mgr.get_conversations(umo)
+                    logger.info(f"[ComfyUI] 获取到 {len(convs)} 个对话")
 
-                    # 解析历史记录获取最后一条assistant消息
-                    history_data = json.loads(conversation.history) if isinstance(conversation.history, str) else conversation.history
-                    logger.info(f"[ComfyUI] history类型: {type(history_data)}, 数据: {str(history_data)[:500]}")
-                    # history_data 可能是 list 或 dict
-                    if isinstance(history_data, list):
-                        messages = history_data
-                    elif isinstance(history_data, dict):
-                        messages = history_data.get("messages", [])
-                    else:
-                        messages = []
-                    logger.info(f"[ComfyUI] messages类型: {type(messages)}, 共 {len(messages) if messages else 0} 条")
-
-                    # 找到最后一条 assistant 消息
+                    conversation = None
                     last_assistant_msg = None
-                    for msg in reversed(messages):
-                        if msg.get("role") == "assistant":
-                            last_assistant_msg = msg.get("content", "")
-                            break
+
+                    # 先检查当前对话
+                    if curr_cid:
+                        curr_conv = await conv_mgr.get_conversation(umo, curr_cid)
+                        logger.info(f"[ComfyUI] 当前对话 {curr_cid} history: {str(curr_conv.history)[:200] if curr_conv.history else 'None'}...")
+                        last_assistant_msg = extract_assistant(curr_conv.history)
+                        if last_assistant_msg:
+                            conversation = curr_conv
+
+                    # 如果当前对话没有，遍历所有对话找最新的
+                    if not last_assistant_msg and convs:
+                        logger.info(f"[ComfyUI] 当前对话无 assistant 消息，遍历所有对话...")
+                        for c in convs:
+                            msg = extract_assistant(c.history)
+                            if msg:
+                                conversation = c
+                                last_assistant_msg = msg
+                                logger.info(f"[ComfyUI] 从对话 {c.cid} 中找到 assistant 消息: {msg[:100]}...")
+                                break
 
                     if not last_assistant_msg:
-                        logger.warning(f"[ComfyUI] 未找到 assistant 角色消息")
+                        logger.warning(f"[ComfyUI] 所有对话中都未找到 assistant 消息")
                         yield event.plain_result("❌ 未检测到 LLM 回复，请直接输入提示词")
                         return
 
-                    logger.info(f"[ComfyUI] 找到 LLM 回复，开始润色...")
+                    logger.info(f"[ComfyUI] 开始润色提示词...")
                     logger.info(f"[ComfyUI] LLM原始回复: {last_assistant_msg[:200]}...")
                     yield event.plain_result("🎨 正在润色提示词...")
 
