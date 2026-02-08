@@ -309,7 +309,7 @@ class ComfyUIPlugin(Star):
 
     # ====== 核心绘图逻辑 ======
     async def _handle_paint_logic(self, event: AstrMessageEvent, direct_send: bool):
-        """处理画图的核心逻辑"""
+        """处理 draw/draw_no 的核心逻辑"""
         # 权限检查
         allowed, reason = self._check_access(event)
         if not allowed:
@@ -322,7 +322,7 @@ class ComfyUIPlugin(Star):
             prompt = parts[1].strip() if len(parts) > 1 else ""
 
             if not prompt:
-                yield event.plain_result("❌ 请输入提示词，例如：/画图 1girl, smile")
+                yield event.plain_result("❌ 请输入提示词，例如：/draw 1girl, smile")
                 return
 
             # 敏感词检查
@@ -358,8 +358,8 @@ class ComfyUIPlugin(Star):
             "━━━━━━━━━━━━━━━━━━",
             "",
             "【基础指令】",
-            "  /画图 <提示词>     生成图片（转发模式）",
-            "  /画图no <提示词>   生成图片（直发模式）",
+            "  /draw <提示词>      生成图片（直发模式）",
+            "  /draw_no <提示词>   生成图片（转发模式）",
             "  /comfy帮助         显示此帮助",
             "",
             "【LLM 模式】",
@@ -850,14 +850,14 @@ class ComfyUIPlugin(Star):
         except Exception as e:
             yield event.plain_result(f"❌ 清空失败: {e}")
 
-    @filter.command("画图", aliases=["绘画"])
+    @filter.command("draw", aliases=["draw"])
     async def cmd_paint(self, event: AstrMessageEvent):
-        async for result in self._handle_paint_logic(event, direct_send=False):
+        async for result in self._handle_paint_logic(event, direct_send=True):
             yield result
 
-    @filter.command("画图no")
+    @filter.command("draw_no", aliases=["draw_no"])
     async def cmd_paint_no(self, event: AstrMessageEvent):
-        async for result in self._handle_paint_logic(event, direct_send=True):
+        async for result in self._handle_paint_logic(event, direct_send=False):
             yield result
 
     # ====== 辅助方法 ======
