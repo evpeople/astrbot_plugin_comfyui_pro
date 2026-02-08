@@ -340,6 +340,7 @@ class ComfyUIPlugin(Star):
 
                     # 解析历史记录获取最后一条assistant消息
                     history_data = json.loads(conversation.history) if isinstance(conversation.history, str) else conversation.history
+                    logger.info(f"[ComfyUI] history类型: {type(history_data)}, 数据: {str(history_data)[:500]}")
                     # history_data 可能是 list 或 dict
                     if isinstance(history_data, list):
                         messages = history_data
@@ -347,6 +348,7 @@ class ComfyUIPlugin(Star):
                         messages = history_data.get("messages", [])
                     else:
                         messages = []
+                    logger.info(f"[ComfyUI] messages类型: {type(messages)}, 共 {len(messages) if messages else 0} 条")
 
                     # 找到最后一条 assistant 消息
                     last_assistant_msg = None
