@@ -315,15 +315,74 @@ class ComfyUIPlugin(Star):
         if not allowed:
             yield event.plain_result(reason)
             return
-        
+
         try:
             full_message = event.message_str.strip()
             parts = full_message.split(' ', 1)
             prompt = parts[1].strip() if len(parts) > 1 else ""
 
+            # 如果没有提供 prompt，获取最新 LLM 响应并润色
             if not prompt:
-                yield event.plain_result("❌ 请输入提示词，例如：/draw 1girl, smile")
-                return
+                try:
+                    # 获取当前对话
+                    umo = event.unified_msg_origin
+                    conv_mgr = self.context.conversation_manager
+                    curr_cid = await conv_mgr.get_curr_conversation_id(umo)
+
+                    if not curr_cid:
+                        yield event.plain_result("❌ 未检测到对话记录，请直接输入提示词")
+                        return
+
+                    conversation = await conv_mgr.get_conversation(umo, curr_cid)
+                    if not conversation or not conversation.history:
+                        yield event.plain_result("❌ 未检测到对话记录，请直接输入提示词")
+                        return
+
+                    # 解析历史记录获取最后一条assistant消息
+                    history_data = json.loads(conversation.history) if isinstance(conversation.history, str) else conversation.history
+                    messages = history_data.get("messages", [])
+
+                    # 找到最后一条 assistant 消息
+                    last_assistant_msg = None
+                    for msg in reversed(messages):
+                        if msg.get("role") == "assistant":
+                            last_assistant_msg = msg.get("content", "")
+                            break
+
+                    if not last_assistant_msg:
+                        yield event.plain_result("❌ 未检测到 LLM 回复，请直接输入提示词")
+                        return
+
+                    yield event.plain_result("🎨 正在润色提示词...")
+                    logger.info(f"[ComfyUI] 获取到 LLM 响应: {last_assistant_msg[:100]}...")
+
+                    # 调用 LLM 润色提示词
+                    provider_id = await self.context.get_current_chat_provider_id(umo)
+                    polish_prompt = f"""你是一个图片生成提示词专家。请将以下描述润色成适合图片生成的自然语言提示词。
+
+要求：
+1. 保留原文的核心内容和风格
+2. 补充细节描述，让画面更丰富
+3. 添加合适的画面构图、光影描述
+4. 如果原文是中文，可以翻译成更详细的英文
+5. 保持简洁但有细节
+6. 输出直接用于图片生成的完整提示词，不需要任何解释
+
+原文：{last_assistant_msg}
+
+请直接输出润色后的提示词："""
+
+                    llm_resp = await self.context.llm_generate(
+                        chat_provider_id=provider_id,
+                        prompt=polish_prompt,
+                    )
+                    prompt = llm_resp.completion_text.strip()
+                    logger.info(f"[ComfyUI] 润色后的提示词: {prompt}")
+
+                except Exception as e:
+                    logger.error(f"[ComfyUI] 获取/润色提示词失败: {e}")
+                    yield event.plain_result(f"❌ 获取提示词失败，请直接输入提示词")
+                    return
 
             # 敏感词检查
             passed, sensitive = self._check_sensitive(prompt, event)
@@ -335,7 +394,7 @@ class ComfyUIPlugin(Star):
 
             async for result in self.comfyui_txt2img(event, prompt=prompt, direct_send=direct_send):
                 yield result
-                
+
         except Exception as e:
             logger.error(f"[ComfyUI] 绘图异常: {e}")
             logger.error(traceback.format_exc())
