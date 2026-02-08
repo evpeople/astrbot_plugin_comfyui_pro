@@ -1190,8 +1190,16 @@ class ComfyUIPlugin(Star):
             result.chain.extend(extra_chain)
 
     @llm_tool(name="comfyui_txt2img")
-    async def comfyui_txt2img(self, event: AstrMessageEvent, ctx: Context = None, prompt: str = None, text: str = None, img_width: int = None, img_height: int = None, direct_send: bool = False) -> MessageEventResult:
-        """ComfyUI 文生图工具"""
+    async def comfyui_txt2img(self, event: AstrMessageEvent, ctx: Context = None, prompt: str = None, text: str = None, img_width: int = None, img_height: int = None, direct_send: bool = True) -> MessageEventResult:
+        """ComfyUI 文生图工具。通过 ComfyUI 生成图片，LLM 在需要根据描述生成图片时可以调用此工具。
+
+        Args:
+            prompt(string): 图片生成提示词，描述想要生成的图片内容。支持英文描述，效果最佳。
+            text(string): prompt 的备用参数，当 prompt 为空时使用 text 作为提示词。
+            img_width(int): 生成图片的宽度，默认为 512。推荐值：512、768、1024 等。
+            img_height(int): 生成图片的高度，默认为 512。推荐值：512、768、1024 等。
+            direct_send(boolean): 是否直接发送图片。True 表示直接发送给用户，False 表示以转发消息形式发送。默认为 True。
+        """
         
         # 权限检查
         allowed, reason = self._check_access(event)
@@ -1260,7 +1268,7 @@ class ComfyUIPlugin(Star):
                 self_id = self._get_self_id(event) or "0"
                 image_component = Image.fromFileSystem(str(img_path))
                 forward_node = Node(
-                    user_id=int(self_id),
+                    user_id=int(self_id) if self_id.isdigit() else 0,
                     nickname="ComfyUI",
                     content=[image_component]
                 )
