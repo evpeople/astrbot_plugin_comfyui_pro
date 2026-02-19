@@ -1345,8 +1345,7 @@ class ComfyUIPlugin(Star):
             logger.info(f"[ComfyUI] ✅ 图片已保存: {img_filename}")
 
             # 返回图片结果（记录到对话历史）
-            image_component = Image.fromFileSystem(str(img_path))
-            return event.chain_result([image_component])
+            return event.image_result(str(img_path))
 
         except Exception as e:
             logger.error(f"[ComfyUI] 执行异常: {e}")
