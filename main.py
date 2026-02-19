@@ -1355,18 +1355,20 @@ class ComfyUIPlugin(Star):
             logger.info(f"[ComfyUI] ✅ 图片已保存: {img_filename}")
 
             # 发送结果
+            image_component = Image.fromFileSystem(str(img_path))
             if direct_send:
-                image_component = Image.fromFileSystem(str(img_path))
                 yield event.chain_result([image_component])
             else:
                 self_id = self._get_self_id(event) or "0"
-                image_component = Image.fromFileSystem(str(img_path))
                 forward_node = Node(
                     user_id=int(self_id) if self_id.isdigit() else 0,
                     nickname="ComfyUI",
                     content=[image_component]
                 )
                 yield event.chain_result([forward_node])
+
+            # 返回值给 LLM
+            yield event.plain_result(f"✅ 图片已生成并发送：{prompt[:100]}{'...' if len(prompt) > 100 else ''}")
 
         except Exception as e:
             logger.error(f"[ComfyUI] 执行异常: {e}")
