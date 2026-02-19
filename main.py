@@ -1352,7 +1352,7 @@ class ComfyUIPlugin(Star):
             ]
 
             # 发送图片并返回文本给 LLM
-            await event.chain_result(chain)
+            event.chain_result(chain)
             from mcp.types import CallToolResult, TextContent
             return CallToolResult(content=[TextContent(type="text", text="已生成并发送图片给用户。")])
 
