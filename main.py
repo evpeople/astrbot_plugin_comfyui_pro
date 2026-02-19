@@ -1346,10 +1346,11 @@ class ComfyUIPlugin(Star):
 
             # 发送图片给用户
             import astrbot.api.message_components as Comp
-            chain = [
+            from astrbot.api.event import MessageChain
+            chain = MessageChain(chain=[
                 Comp.Plain("已生成图片！"),
                 Comp.Image.fromFileSystem(str(img_path))
-            ]
+            ])
             await event.send(chain)
 
             # 返回文本给 LLM
