@@ -427,7 +427,9 @@ class ComfyUIPlugin(Star):
                 yield event.plain_result(f"🚫 检测到敏感词：{tip}{extra}，无法生成图片")
                 return
 
-            async for result in self.comfyui_txt2img(event, prompt=prompt, direct_send=direct_send):
+            # 调用工具生成图片
+            result = await self.comfyui_txt2img(event, prompt=prompt)
+            if result:
                 yield result
 
         except Exception as e:
@@ -1269,13 +1271,9 @@ class ComfyUIPlugin(Star):
 
         extra_chain = []
         try:
-            async for res in self.comfyui_txt2img(
-                event,
-                prompt=prompt,
-                direct_send=True,
-            ):
-                if hasattr(res, "chain"):
-                    extra_chain.extend(res.chain)
+            res = await self.comfyui_txt2img(event, prompt=prompt)
+            if res and hasattr(res, "chain"):
+                extra_chain.extend(res.chain)
         except Exception as e:
             logger.error(f"[ComfyUI] 自动绘图异常: {e}")
             return
@@ -1284,7 +1282,7 @@ class ComfyUIPlugin(Star):
             result.chain.extend(extra_chain)
 
     @llm_tool(name="comfyui_txt2img")
-    async def comfyui_txt2img(self, event: AstrMessageEvent, ctx: Context = None, prompt: str = None, text: str = None, img_width: int = None, img_height: int = None, direct_send: bool = True) -> MessageEventResult:
+    async def comfyui_txt2img(self, event: AstrMessageEvent, ctx: Context = None, prompt: str = None, text: str = None, img_width: int = None, img_height: int = None) -> MessageEventResult:
         """ComfyUI 文生图工具。通过 ComfyUI 生成图片，LLM 在需要根据描述生成图片时可以调用此工具。
 
         Args:
@@ -1292,49 +1290,42 @@ class ComfyUIPlugin(Star):
             text(string): prompt 的备用参数，当 prompt 为空时使用 text 作为提示词。
             img_width(int): 生成图片的宽度，默认为 512。推荐值：512、768、1024 等。
             img_height(int): 生成图片的高度，默认为 512。推荐值：512、768、1024 等。
-            direct_send(boolean): 是否直接发送图片。True 表示直接发送给用户，False 表示以转发消息形式发送。默认为 True。
         """
-        
+
         # 权限检查
         allowed, reason = self._check_access(event)
         if not allowed:
-            yield event.plain_result(reason)
-            return
+            return event.plain_result(reason)
 
         # 参数处理
         if not prompt and text:
             prompt = text
 
         if not prompt:
-            yield event.plain_result("❌ 未提供 prompt，请重试")
-            return
+            return event.plain_result("❌ 未提供 prompt，请重试")
 
         if not isinstance(prompt, str) or not prompt.strip():
             raw = getattr(event, "message_str", "") or ""
             prompt = re.sub(r'```math\s*At:\d+```\s*', '', raw).strip()
             if not prompt:
-                yield event.plain_result("❌ 请输入提示词")
-                return
+                return event.plain_result("❌ 请输入提示词")
 
         # API 检查
         if not getattr(self, 'api', None):
-            yield event.plain_result("❌ ComfyUI 服务未连接，请检查配置")
-            return
-        
+            return event.plain_result("❌ ComfyUI 服务未连接，请检查配置")
+
         try:
             # 敏感词检查
             passed, sensitive = self._check_sensitive(prompt, event)
             if not passed:
                 tip = "、".join(sensitive[:5])
                 logger.warning(f"[ComfyUI] 用户 {event.get_sender_id()} 触发敏感词: {tip}")
-                yield event.plain_result(f"🚫 检测到敏感词：{tip}，无法生成")
-                return
+                return event.plain_result(f"🚫 检测到敏感词：{tip}，无法生成")
 
             # 冷却检查
             ok, remain = self._check_cooldown(event)
             if not ok:
-                yield event.plain_result(f"⏱️ 冷却中，请在 {remain} 秒后重试")
-                return
+                return event.plain_result(f"⏱️ 冷却中，请在 {remain} 秒后重试")
 
             logger.info(f"[ComfyUI] 🎨 开始生成 | 用户: {event.get_sender_id()} | Prompt: {prompt[:50]}...")
 
@@ -1343,34 +1334,21 @@ class ComfyUIPlugin(Star):
 
             if not img_data:
                 logger.error(f"[ComfyUI] 生成失败: {error_msg}")
-                yield event.plain_result(f"❌ 生成失败：{error_msg}")
-                return
+                return event.plain_result(f"❌ 生成失败：{error_msg}")
 
             # 保存图片
             img_filename = f"{uuid.uuid4()}.png"
             img_path = self.output_dir / img_filename
             with open(img_path, 'wb') as fp:
                 fp.write(img_data)
-            
+
             logger.info(f"[ComfyUI] ✅ 图片已保存: {img_filename}")
 
-            # 发送结果
+            # 返回图片结果（记录到对话历史）
             image_component = Image.fromFileSystem(str(img_path))
-            if direct_send:
-                yield event.chain_result([image_component])
-            else:
-                self_id = self._get_self_id(event) or "0"
-                forward_node = Node(
-                    user_id=int(self_id) if self_id.isdigit() else 0,
-                    nickname="ComfyUI",
-                    content=[image_component]
-                )
-                yield event.chain_result([forward_node])
-
-            # 返回值给 LLM
-            yield event.plain_result(f"✅ 图片已生成并发送：{prompt[:100]}{'...' if len(prompt) > 100 else ''}")
+            return event.chain_result([image_component])
 
         except Exception as e:
             logger.error(f"[ComfyUI] 执行异常: {e}")
             logger.error(traceback.format_exc())
-            yield event.plain_result(f"❌ 内部错误: {str(e)[:50]}")
+            return event.plain_result(f"❌ 内部错误: {str(e)[:50]}")
