@@ -1349,7 +1349,7 @@ class ComfyUIPlugin(Star):
             logger.info(f"[ComfyUI] self.context attrs: {dir(self.context)}")
 
             # 发送图片给用户
-            from astrbot.core.message.message import MessageChain
+            from astrbot.api.event import MessageChain
             from astrbot.core.message.components import Image
             umo = event.unified_msg_origin
             message_chain = MessageChain().message("已生成图片！").file_image(str(img_path))
