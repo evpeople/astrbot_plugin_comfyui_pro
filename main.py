@@ -1345,7 +1345,11 @@ class ComfyUIPlugin(Star):
             logger.info(f"[ComfyUI] ✅ 图片已保存: {img_filename}")
 
             # 返回图片结果（记录到对话历史）
-            return event.image_result(str(img_path))
+            import astrbot.api.message_components as Comp
+            chain = [
+                Comp.Image.fromFileSystem(str(img_path)),
+            ]
+            return event.chain_result(chain)
 
         except Exception as e:
             logger.error(f"[ComfyUI] 执行异常: {e}")
