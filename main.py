@@ -1344,17 +1344,20 @@ class ComfyUIPlugin(Star):
 
             logger.info(f"[ComfyUI] ✅ 图片已保存: {img_filename}")
 
-            # 返回图片结果（记录到对话历史）
-            import base64
-            from mcp.types import CallToolResult, ImageContent, TextContent
+            # 发送图片给用户
+            from astrbot.core.message.message_event_result import MessageEventResult, MessageChain
+            from astrbot.core.message.components import Image as CompImage
+            event.set_result(
+                MessageEventResult(
+                    message=MessageChain(
+                        chain=[CompImage.fromFileSystem(str(img_path))]
+                    )
+                )
+            )
 
-            with open(img_path, 'rb') as f:
-                img_base64 = base64.b64encode(f.read()).decode('utf-8')
-
-            return CallToolResult(content=[
-                TextContent(type="text", text="已生成并发送图片给用户。"),
-                ImageContent(type="image", data=img_base64, mimeType="image/png")
-            ])
+            # 返回文本给 LLM
+            from mcp.types import CallToolResult, TextContent
+            return CallToolResult(content=[TextContent(type="text", text="已生成并发送图片给用户。")])
 
         except Exception as e:
             logger.error(f"[ComfyUI] 执行异常: {e}")
