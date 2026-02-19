@@ -1345,15 +1345,10 @@ class ComfyUIPlugin(Star):
             logger.info(f"[ComfyUI] ✅ 图片已保存: {img_filename}")
 
             # 发送图片给用户
-            from astrbot.core.message.message_event_result import MessageEventResult, MessageChain
-            from astrbot.core.message.components import Image as CompImage
-            event.set_result(
-                MessageEventResult(
-                    message=MessageChain(
-                        chain=[CompImage.fromFileSystem(str(img_path))]
-                    )
-                )
-            )
+            from astrbot.core.message.message_event_result import MessageEventResult
+            from astrbot.core.message.components import Image
+            result = MessageEventResult(chain=[Image.fromFileSystem(str(img_path))])
+            context.context.event.set_result(result)
 
             # 返回文本给 LLM
             from mcp.types import CallToolResult, TextContent
