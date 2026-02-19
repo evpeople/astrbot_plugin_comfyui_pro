@@ -1350,11 +1350,10 @@ class ComfyUIPlugin(Star):
                 Comp.Plain("已生成图片！"),
                 Comp.Image.fromFileSystem(str(img_path))
             ]
+            await event.send(chain)
 
-            # 发送图片并返回文本给 LLM
-            event.chain_result(chain)
-            from mcp.types import CallToolResult, TextContent
-            return CallToolResult(content=[TextContent(type="text", text="已生成并发送图片给用户。")])
+            # 返回文本给 LLM
+            return "已将生成的图片发送给用户"
 
         except Exception as e:
             logger.error(f"[ComfyUI] 执行异常: {e}")
